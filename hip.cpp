@@ -4,22 +4,6 @@
 
 #define HIP_ENABLE_PRINTF
 
-
-__global__ 
-void reductionSum (
-      float* input,
-      float* input2,
-      float* output,
-      size_t n 
-    )
-{
-  float data;
-  unsigned int i = blockIdx.x * blockDim.x +  threadIdx.x;
-  unsigned int j = blockIdx.y * blockDim.y + threadIdx.y;
-
-  output[j * n + i] = input[j * n + i] + input2[j * n + i];;
-}
-
 __global__
 void matrixMul (
       float* input0,
@@ -60,5 +44,38 @@ void matrixUpdate (
   output[index] = input0[index] + input1[index];
   
   __threadfence();
-  //__syncthreads();
+}
+
+/*
+  block_size -> number of wavefrount = block_size % wavefront_size == 0 ? block_size / wavefront : block_size 
+  
+  shared memory should be declared by block_size -> communication between threads of one block. Given that all threads of one block will be scheduled on same CU
+
+  wavefront will be scheduled on wavefront pools on this CU. different wavefronts access corresponding part of LDS
+*/
+__global__
+void sumOneDimension (
+      float* input,
+      float* output,
+      size_t size
+    )
+{
+  __shared__ float shared_mem[BLOCK_DIM_X];
+
+  int col = blockDim.x * blockIdx.x + threadIdx.x;
+  int row = blockDim.y * blockIdx.y + threadIdx.y;
+  shared_mem[threadIdx.x] = input[col];
+
+  __syncthreads();
+
+  for (int stride = BLOCK_DIM_X / 2; stride > 0; stride /= 2) {
+    if (threadIdx.x < stride)
+      shared_mem[threadIdx.x] += shared_mem[threadIdx.x + stride];
+  }
+
+  __syncthreads();
+
+  if (threadIdx.x == 0) {
+    output[blockIdx.x] = shared_mem[0];
+  }
 }
